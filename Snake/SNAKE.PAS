@@ -1,0 +1,274 @@
+uses crt, graph;
+const fnames : array [1..5] of string[8] =
+('wall', 'flower', 'cherry', 'mushroom', 'icecream');
+var gd, gm : integer;
+    pm     : byte;
+    key_   : char;
+    mm     : array [1..5] of pointer;
+    body   : pointer;
+    score  : word;
+    win    : boolean;
+    tt     : longint absolute $40:$6C;
+    oldt   : longint;
+
+function loader(s: string): pointer; {функция загрузки картинки из файла}
+var
+  sz: longint;
+   f: file;
+   b: pointer;
+Begin
+    assign(f,s); {Назначает файловой переменной имя файла с картинкой}
+    reset(f,1); {открытие файла для чтения}
+    sz:=filesize(f); {размер файла}
+    getmem(b, sz); {выделение памяти}
+    blockread(f,b^,sz); {чтение всего файла}
+    close(f); {закрытие файла}
+    loader:=b; {для возврата из функции адреса в памяти картинки}
+end;
+
+procedure menu;  {Процедура выбора пункта меню}
+const pmnames : array [0..2] of string = ('game', 'help', 'exit');
+var i : byte;
+begin
+  cleardevice; {очистка экрана}
+  settextjustify(1, 1); {выравнивание по центру}
+  settextstyle(4, 0, 8);
+  setcolor(12);
+  outtextxy(320, 120, 'Menu');
+  settextstyle(4, 0, 4);
+  setcolor(15);
+  for i := 0 to 2 do outtextxy(320, 200 + i*40, pmnames[i]); {вывод всех пунктов на экран}
+  repeat
+    setcolor(10);
+    outtextxy(320, 200 + pm*40, pmnames[pm]); {вывод пункта меню помеченного курсором зеленым цветом (пометка)}
+    key_ := readkey;
+    if key_ = #0 then {если нажаты стрелки}
+    begin
+      key_ := readkey; {чтение кода стрелок}
+      setcolor(15);
+      outtextxy(320, 200 + pm*40, pmnames[pm]);  {вывод пункта меню помеченного курсором белым цветом (снятие пометки)}
+      case key_ of
+        #72 : if pm <> 0 then dec(pm); {клавиша вверх - pm уменьшаем на 1}
+        #80 : if pm <> 2 then inc(pm); {клавиша вниз - pm увеличиваем на 1}
+      end;
+    end else if key_ = #27 then {если "Escape"}
+             begin
+               pm := 2;
+               key_ := #13; {для выхода из цикла}
+             end;
+  until key_ = #13;
+  cleardevice; {очистка экрана}
+end;
+
+procedure game; {процедура игры}
+type coord       = record x, y : byte end;
+ var map         : array [0..23, 0..23] of byte;
+     i, j        : byte;
+     key         : char;
+     snake       : array [0..1023] of coord;
+     head        : record
+                     lth : byte;
+                     vecx, vecy : shortint;
+                   end;
+    s            : string;
+    tempx, tempy : byte;
+
+   procedure initmap; {инициализация карты}
+   var i, j : byte;
+   begin
+      for j := 0 to 23 do
+       for i := 0 to 23 do map[i, j] := 0; {обнуление массива}
+      for i := 0 to 23 do begin   {расстановка и вывод стенок}
+        putimage(i*20, 0, mm[1]^, 0); {вывод верхней}
+        putimage(0, i*20, mm[1]^, 0); {вывод левой}
+        putimage(i*20, 460, mm[1]^, 0); {вывод нижней}
+        putimage(460, i*20, mm[1]^, 0); {вывод правой}
+        map[i,  0] := 1; {верхняя}
+        map[i, 23] := 1; {нижняя}
+        map[0,  i] := 1; {левая}
+        map[23, i] := 1; {правая}
+      end;
+      for i := 1 to 30 do        {случайная расстановка и вывод на экран препятствий и бонусов}
+      begin
+        repeat
+          tempx := random(20) + 2; {случайная координата по x}
+          tempy := random(20) + 2; {случайная координата по y}
+        until map[tempx, tempy] = 0;
+        map[tempx, tempy] := 1;  {препятствие в массив}
+        putimage(tempx*20, tempy*20, mm[1]^, 0); {вывод препятствия}
+        repeat
+          tempx := random(20) + 2; {случайная координата по x}
+          tempy := random(20) + 2; {случайная координата по y}
+        until map[tempx, tempy] = 0;
+        map[tempx, tempy] := random(4)+2; {случайный бонус в массив}
+        putimage(tempx*20, tempy*20, mm[map[tempx, tempy]]^, 0); {вывод бонуса}
+      end;
+   end; {конец initmap}
+
+   procedure initsnake;
+   var i : byte;
+   begin
+     head.vecx := 1; {первоначальное направление по x}
+     head.vecy := 0; {первоначальное направление по y}
+     head.lth := 2; {первоначальная длина змей}
+     score := 0;
+     for i := 0 to head.lth do  {первоначальные координаты }
+     begin
+       snake[i].x := 3-i;
+       snake[i].y := 1;
+       map[snake[i].x, snake[i].y] := 1; {для проверки на врезание в саму себя}
+       putimage(snake[i].x*20, snake[i].y*20, body^, normalput); {вывод}
+     end;
+     oldt := tt;
+   end; {конец initsnake}
+
+   procedure snakehead; {голова змейки - изменение направления}
+   begin
+     key := readkey;
+     if key = #0 then
+     begin
+       key := readkey;
+       case key of
+         #77 : if head.vecx = 0 then {вправо}
+               begin
+                 head.vecx := 1;
+                 head.vecy := 0;
+               end;
+         #75 : if head.vecx = 0 then {влево}
+               begin
+                 head.vecx := -1;
+                 head.vecy := 0;
+               end;
+         #80 : if head.vecy = 0 then {вниз}
+               begin
+                 head.vecx := 0;
+                 head.vecy := 1;
+               end;
+         #72 : if head.vecy = 0 then {вверх}
+               begin
+                 head.vecx := 0;
+                 head.vecy := -1;
+               end;
+       end;
+     end;
+   end;
+
+   procedure GameOver(message : string);
+   begin
+     cleardevice;
+     settextjustify(1, 1);
+     settextstyle(4, 0, 8);
+     setcolor(4);
+     outtextxy(320, 210, message);
+     setcolor(4);
+     settextstyle(0, 0, 2);
+     outtextxy(320, 300, 'Ваши очки: '+s);
+     setcolor(15);
+     settextstyle(0, 0, 1);
+     outtextxy(320, 460, 'Нажмите "Escape"');
+     repeat key := readkey until key = #27;
+   end;
+
+   procedure movesnake; {передвижение змейки}
+   var i : byte;
+   begin
+     if map[snake[0].x+head.vecx, snake[0].y+head.vecy] = 1 then GameOver('Game over')
+     else begin
+            if map[snake[0].x+head.vecx, snake[0].y+head.vecy] = 0 then
+            begin
+              putimage(snake[head.lth].x*20, snake[head.lth].y*20, body^, xorput);
+              map[snake[head.lth].x, snake[head.lth].y] := 0;
+            end else inc(head.lth);
+            for i := 1 to head.lth do
+            snake[head.lth - i + 1] := snake[head.lth - i];
+            inc(snake[0].x, head.vecx);
+            inc(snake[0].y, head.vecy);
+            if map[snake[0].x, snake[0].y] <> 0 then
+            begin
+              putimage(snake[0].x*20, snake[0].y*20, mm[map[snake[0].x, snake[0].y]]^, xorput);
+              inc(score, 10);
+              setcolor(0);
+              outtextxy(500, 10, s);
+              str(score, s);
+              setcolor(10);
+              outtextxy(500, 10, s);
+              repeat
+                tempx := random(20) + 2; {случайная координата по x}
+                tempy := random(20) + 2; {случайная координата по y}
+              until (map[tempx, tempy] = 0) and not
+                    ((tempy = snake[0].y) and (tempx = snake[0].x));
+              map[tempx, tempy] := random(4)+2; {случайный бонус в массив}
+              putimage(tempx*20, tempy*20, mm[map[tempx, tempy]]^, 0); {вывод бонуса}
+            end;
+            map[snake[0].x, snake[0].y] := 1;
+            putimage(snake[0].x*20, snake[0].y*20, body^, 0);
+          end;
+   end;
+
+begin
+  initmap;
+  initsnake;
+  key := #0;
+  settextstyle(0, 0, 2);
+  settextjustify(0, 2);
+  repeat
+    if keypressed then snakehead; {если нажата клавиша}
+    movesnake;
+    repeat until tt >= oldt + 10;
+    oldt := tt;
+
+(*  win := true;
+    for j := 0 to 23 do
+    for i := 0 to 23 do if map[i, j] in [2..5] then win := false; {проверка на наличие бонусов}
+    if win then gameover('Congratulations!');  (*)
+  until key = #27;
+end;
+
+procedure help; {процедура вывода помощи на экран}
+var f : text;
+    s : string;
+    i : byte;
+begin
+  assign(f, 'help.txt'); {Назначает файловой переменной имя файла помощи}
+  setcolor(15);
+  settextjustify(0, 0);
+  settextstyle(0, 0, 1);
+  {$I-}
+  reset(f); {Открываем файл для чтения}
+  {$I-}
+  if ioresult = 0 then {если ошибок при открытии файла нет}
+  begin
+    i := 0;
+    while not eof(f) do {пока не конец файла}
+    begin
+      inc(i);
+      readln(f, s); {чтение строки из файла в переменную s}
+      outtextxy(10, i*10, s); {вывод строки s}
+    end;
+    close(f); {закрытие файла}
+  end else outtextxy(10, 10, 'Ошибка: Файл помощи не найден.');
+  outtextxy(10, 470, 'нажмите "Ввод" ("Enter")');
+  repeat key_ := readkey until key_ = #13; {цикл чтение клавишь пока не нажата "Enter"}
+end;
+
+procedure init;
+var i : byte;
+begin
+  for i := 1 to 5 do mm[i] := loader(fnames[i]);
+  body := loader('body');
+  randomize;
+  initgraph(gd, gm, '');
+end;
+
+begin
+  init;
+  repeat
+    menu;
+    case pm of {выбор действия в зависимости от пункта меню}
+      0 : game;
+      1 : help;
+      2 : key_ := #27; {для выхода из цикла}
+    end;
+  until key_ = #27;
+  closegraph;
+end.
